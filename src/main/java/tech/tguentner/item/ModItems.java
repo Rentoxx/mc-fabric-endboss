@@ -10,10 +10,7 @@ import net.minecraft.util.Identifier;
 import tech.tguentner.AssasinEndboss;
 
 public class ModItems {
-    // ÄNDERUNG HIER: Verwende deine neue Klasse "MagischerStabItem"
     public static final Item MAGISCHER_STAB = register("magischer_stab", new MagischerStabItem(new Item.Settings()));
-
-    public static final Item DEBUG_ICON = register("debug_icon", new Item(new Item.Settings()));
 
     private static Item register(String path, Item item) {
         return Registry.register(Registries.ITEM, Identifier.of(AssasinEndboss.MOD_ID, path), item);
@@ -21,7 +18,6 @@ public class ModItems {
 
     private static void addItemsToCombatTab(FabricItemGroupEntries entries) {
         entries.add(MAGISCHER_STAB);
-        entries.add(DEBUG_ICON);
     }
 
     public static void registerModItems() {

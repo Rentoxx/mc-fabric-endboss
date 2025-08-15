@@ -3,41 +3,36 @@ package tech.tguentner.entity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.data.TrackedData;
 import net.minecraft.entity.data.TrackedDataHandlerRegistry;
-import net.minecraft.entity.projectile.thrown.SnowballEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Box;
+import net.minecraft.particle.ParticleTypes;
+import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
-import org.joml.Vector3f; // Wichtig: Der richtige Import
-import net.minecraft.particle.ParticleTypes;
+import org.joml.Vector3f;
 
-import java.util.List;
+// ERBT JETZT VON UNSERER NEUEN KLASSE
+public class OrbitingProjectileEntity extends AbstractTargetingProjectile {
 
-public class OrbitingProjectileEntity extends SnowballEntity {
-
-    enum State {
+    private enum State {
         INACTIVE,
         ARMED,
         FIRING
     }
 
-
-    // 1. Definiere die Daten, die getrackt werden sollen.
-    // Wir benutzen Vector3f, da Vec3d nicht direkt getrackt werden kann.
     private static final TrackedData<Vector3f> ORBIT_OFFSET = DataTracker.registerData(OrbitingProjectileEntity.class, TrackedDataHandlerRegistry.VECTOR3F);
     private static final TrackedData<Integer> STATE = DataTracker.registerData(OrbitingProjectileEntity.class, TrackedDataHandlerRegistry.INTEGER);
 
-    private int lifeTicks = 200;
+    // Konstanten machen den Code lesbarer
+    private static final int MAX_LIFETIME_TICKS = 200;
+    private static final int INACTIVE_DURATION_TICKS = 100;
 
-    private int inactiveTicks = 100;
+    private int lifeTicks = MAX_LIFETIME_TICKS;
+    private int inactiveTicks = INACTIVE_DURATION_TICKS;
 
-    // Das private Feld 'orbitOffset' wird nicht mehr benötigt.
-
-    public OrbitingProjectileEntity(EntityType<? extends SnowballEntity> entityType, World world) {
+    public OrbitingProjectileEntity(EntityType<? extends OrbitingProjectileEntity> entityType, World world) {
         super(entityType, world);
         this.setNoGravity(true);
     }
@@ -45,7 +40,6 @@ public class OrbitingProjectileEntity extends SnowballEntity {
     public OrbitingProjectileEntity(World world, LivingEntity owner, Vec3d offset) {
         this(ModEntities.ORBITING_PROJECTILE, world);
         this.setOwner(owner);
-        // 3. Setze den Wert im DataTracker, anstatt das private Feld zu verwenden.
         this.setOrbitOffset(offset);
         this.setState(State.INACTIVE);
     }
@@ -54,113 +48,98 @@ public class OrbitingProjectileEntity extends SnowballEntity {
     protected void initDataTracker(DataTracker.Builder builder) {
         super.initDataTracker(builder);
         builder.add(ORBIT_OFFSET, new Vector3f(0.0f, 0.0f, 0.0f));
-        builder.add(STATE, State.INACTIVE.ordinal()); // Zustand standardmäßig auf INACTIVE setzen
+        builder.add(STATE, State.INACTIVE.ordinal());
     }
 
-    // 4. Helfer-Methoden zum Setzen und Holen des Werts (mit Typ-Umwandlung)
+    @Override
+    public void tick() {
+        super.tick();
+        Entity owner = this.getOwner();
+
+        if (owner == null || !owner.isAlive() || this.lifeTicks-- <= 0) {
+            this.discard();
+            return;
+        }
+
+        // Führe die Logik für den aktuellen Zustand aus
+        switch (this.getState()) {
+            case INACTIVE -> tickInactiveState();
+            case ARMED -> tickArmedState((LivingEntity) owner);
+            case FIRING -> tickFiringState();
+        }
+    }
+
+    private void tickInactiveState() {
+        if (this.inactiveTicks-- <= 0) {
+            this.setState(State.ARMED);
+        }
+        updateOrbitPosition((LivingEntity) this.getOwner());
+        spawnParticles();
+    }
+
+    private void tickArmedState(LivingEntity owner) {
+        // Alle 10 Ticks nach einem Ziel suchen
+        if (this.age % 10 == 0) {
+            // Die Methode kommt jetzt von der Oberklasse!
+            LivingEntity target = findClosestTarget(25.0);
+            if (target != null) {
+                // Ziel gefunden -> Zustand wechseln und abfeuern
+                Vec3d direction = target.getEyePos().subtract(this.getPos()).normalize();
+                this.setVelocity(direction.multiply(1.5));
+                this.setState(State.FIRING);
+                return; // Beende die Methode hier, um nicht die Orbit-Position zu überschreiben
+            }
+        }
+        updateOrbitPosition(owner);
+        spawnParticles();
+    }
+
+    private void tickFiringState() {
+        // In diesem Zustand fliegt das Projektil nur noch.
+        // Die `super.tick()` kümmert sich um die Bewegung basierend auf der gesetzten Velocity.
+        // Keine weitere Logik nötig.
+    }
+
+    private void updateOrbitPosition(LivingEntity owner) {
+        Vec3d rotatedOffset = this.getOrbitOffset().rotateY((float) -Math.toRadians(owner.getYaw()));
+        Vec3d targetPosition = owner.getEyePos().add(rotatedOffset);
+        this.setPosition(targetPosition);
+        this.setVelocity(Vec3d.ZERO);
+    }
+
+    private void spawnParticles() {
+        if (getWorld().isClient) {
+            if (this.getState() == State.INACTIVE) {
+                getWorld().addParticle(ParticleTypes.END_ROD, this.getX(), this.getY(), this.getZ(), 0, 0, 0);
+            } else { // ARMED
+                getWorld().addParticle(ParticleTypes.CRIT, this.getX(), this.getY(), this.getZ(), 0, 0, 0);
+            }
+        }
+    }
+
+    @Override
+    protected void onEntityHit(EntityHitResult entityHitResult) {
+        super.onEntityHit(entityHitResult);
+        Entity target = entityHitResult.getEntity();
+        Entity owner = this.getOwner();
+        float damageAmount = 4.0f;
+        DamageSource damageSource = this.getDamageSources().thrown(this, owner);
+        target.damage(damageSource, damageAmount);
+    }
+
+    @Override
+    public boolean canHit(Entity entity) {
+        // Kann nur treffen, wenn es abgefeuert wurde und das Ziel nicht der Besitzer ist
+        return this.getState() == State.FIRING && !entity.equals(this.getOwner());
+    }
+
+    // --- DataTracker Helper ---
     public void setOrbitOffset(Vec3d offset) {
         this.dataTracker.set(ORBIT_OFFSET, offset.toVector3f());
     }
 
     public Vec3d getOrbitOffset() {
         return new Vec3d(this.dataTracker.get(ORBIT_OFFSET));
-    }
-
-    @Override
-    public void tick() {
-        super.tick();
-        Entity ownerAsEntity = this.getOwner();
-
-        if (ownerAsEntity == null || !ownerAsEntity.isAlive() || this.lifeTicks-- <= 0) {
-            this.discard();
-            return;
-        }
-
-        // Zustand wechseln
-        if (this.getState() == State.INACTIVE && this.inactiveTicks > 0) {
-            this.inactiveTicks--;
-            if (this.inactiveTicks == 0) {
-                this.setState(State.ARMED);
-            }
-        }
-
-
-        // --- START VON SCHRITT 4 ---
-        // Zielsuche UND Abfeuern
-        if (this.getState() == State.ARMED) {
-            if (this.age % 10 == 0) {
-                LivingEntity target = findClosestTarget(25.0);
-                if (target != null) {
-                    // ZIEL GEFUNDEN!
-                    System.out.println("SCHRITT 4 ERFOLGREICH: Feuere auf " + target.getName().getString());
-
-                    // 1. Richtung zur Position des Ziels berechnen und Geschwindigkeit setzen
-                    Vec3d direction = target.getEyePos().subtract(this.getPos()).normalize();
-                    this.setVelocity(direction.multiply(1.5)); // 1.5 ist eine gute Schneeball-Geschwindigkeit
-
-                    // 2. Zustand auf FIRING setzen, damit es nicht nochmal schießt
-                    this.setState(State.FIRING);
-                }
-            }
-        }
-
-        // Die "Entriegelung": Die Schwebe-Logik wird nur ausgeführt, wenn wir NICHT feuern.
-        if (this.getState() != State.FIRING) {
-            LivingEntity owner = (LivingEntity) ownerAsEntity;
-
-            if (getWorld().isClient) {
-                if (this.getState() == State.INACTIVE) {
-                    getWorld().addParticle(ParticleTypes.END_ROD, this.getX(), this.getY(), this.getZ(), 0, 0, 0);
-                } else { // ARMED
-                    getWorld().addParticle(ParticleTypes.CRIT, this.getX(), this.getY(), this.getZ(), 0, 0, 0);
-                }
-            }
-
-            Vec3d rotatedOffset = this.getOrbitOffset().rotateY((float) -Math.toRadians(owner.getYaw()));
-            Vec3d targetPosition = owner.getEyePos().add(rotatedOffset);
-
-            this.setPosition(targetPosition);
-            this.setVelocity(Vec3d.ZERO);
-        }
-    }
-
-    // Bonus: Speichern und Laden, falls die Entität mal länger existiert (Chunk unload/load)
-    @Override
-    public void writeCustomDataToNbt(NbtCompound nbt) {
-        super.writeCustomDataToNbt(nbt);
-        Vec3d offset = getOrbitOffset();
-        nbt.putDouble("OffsetX", offset.x);
-        nbt.putDouble("OffsetY", offset.y);
-        nbt.putDouble("OffsetZ", offset.z);
-    }
-
-    @Override
-    public void readCustomDataFromNbt(NbtCompound nbt) {
-        super.readCustomDataFromNbt(nbt);
-        if (nbt.contains("OffsetX")) {
-            Vec3d offset = new Vec3d(nbt.getDouble("OffsetX"), nbt.getDouble("OffsetY"), nbt.getDouble("OffsetZ"));
-            setOrbitOffset(offset);
-        }
-    }
-
-    @Override
-    public boolean canHit(Entity entity) {
-        return this.getState() == State.FIRING && !entity.equals(this.getOwner());
-    }
-
-    @Override
-    protected void onEntityHit(net.minecraft.util.hit.EntityHitResult entityHitResult) {
-        super.onEntityHit(entityHitResult); // Wichtig: Führt die Standard-Logik aus (z.B. Knockback)
-
-        Entity target = entityHitResult.getEntity(); // Das getroffene Ziel
-        Entity owner = this.getOwner();               // Der Spieler, der geschossen hat
-        float damageAmount = 4.0f;                    // Wie viel Schaden es machen soll (2 Herzen)
-
-        // Erstellt eine Schadensquelle, die vom Projektil und dem Besitzer ausgeht
-        net.minecraft.entity.damage.DamageSource damageSource = this.getDamageSources().thrown(this, owner);
-
-        // Verursacht den Schaden am Ziel
-        target.damage(damageSource, damageAmount);
     }
 
     private void setState(State state) {
@@ -171,34 +150,6 @@ public class OrbitingProjectileEntity extends SnowballEntity {
         return State.values()[this.dataTracker.get(STATE)];
     }
 
-
-    private LivingEntity findClosestTarget(double radius) {
-        World world = this.getWorld();
-        Entity owner = this.getOwner();
-        Box searchBox = this.getBoundingBox().expand(radius);
-
-        // Schritt 1: Hole alle LivingEntities in der Box, ohne Filter.
-        List<LivingEntity> allEntitiesInBox = world.getNonSpectatingEntities(LivingEntity.class, searchBox);
-
-        LivingEntity closestTarget = null;
-        double minDistanceSq = Double.MAX_VALUE;
-
-        // Schritt 2: Gehe die Liste mit einer for-Schleife durch.
-        for (LivingEntity potentialTarget : allEntitiesInBox) {
-
-            // Schritt 3: Wende die Filter als if-Bedingung an.
-            // Dies ersetzt den Lambda-Ausdruck.
-            if (!potentialTarget.equals(owner) && potentialTarget.isAlive()) {
-
-                // Schritt 4: Führe die Distanzberechnung nur für gültige Ziele aus.
-                double distanceSq = this.squaredDistanceTo(potentialTarget);
-                if (distanceSq < minDistanceSq) {
-                    minDistanceSq = distanceSq;
-                    closestTarget = potentialTarget;
-                }
-            }
-        }
-        return closestTarget;
-    }
-
+    // Die findClosestTarget-Methode wird komplett entfernt (geerbt).
+    // Die NBT-Methoden werden entfernt (wegen .disableSaving()).
 }
