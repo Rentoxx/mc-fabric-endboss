@@ -1,0 +1,45 @@
+{
+	"schemaVersion": 1,
+	"id": "assasin-endboss",
+	"version": "${version}",
+	"name": "Assasin Endboss",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/assasin-endboss/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"tech.tguentner.AssasinEndboss"
+		],
+		"client": [
+			"tech.tguentner.AssasinEndbossClient"
+		],
+		"fabric-datagen": [
+			"tech.tguentner.AssasinEndbossDataGenerator"
+		]
+	},
+	"mixins": [
+		"assasin-endboss.mixins.json",
+		{
+			"config": "assasin-endboss.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.17.2",
+		"minecraft": "~1.21",
+		"java": ">=21",
+		"fabric-api": "*",
+		"geckolib": ">=4.5"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
