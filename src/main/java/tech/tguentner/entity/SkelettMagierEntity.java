@@ -5,16 +5,31 @@ import net.minecraft.entity.EntityType;
 import net.minecraft.entity.ai.goal.*;
 import net.minecraft.entity.attribute.DefaultAttributeContainer;
 import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.entity.data.DataTracker;
+import net.minecraft.entity.data.TrackedData;
+import net.minecraft.entity.data.TrackedDataHandlerRegistry;
 import net.minecraft.entity.mob.HostileEntity;
+import net.minecraft.entity.passive.VillagerEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.world.World;
 import software.bernie.geckolib.animatable.GeoEntity;
 import software.bernie.geckolib.animatable.instance.AnimatableInstanceCache;
 import software.bernie.geckolib.animation.*;
 import software.bernie.geckolib.util.GeckoLibUtil;
+import tech.tguentner.entity.goals.SkelettMagierSpamAttackGoal;
 
 public class SkelettMagierEntity extends HostileEntity implements GeoEntity {
     private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache(this);
+
+    public int spamAttackCooldown = 0;
+    public enum AttackState {
+        NONE,
+        PREPARE,
+        CAST,
+        FINISH
+    }
+    private static final TrackedData<Integer> ATTACK_STATE =
+            DataTracker.registerData(SkelettMagierEntity.class, TrackedDataHandlerRegistry.INTEGER);
 
     // NEU: Ein Timer für unsere Idle-Animationen
     private int idleAnimationCooldown = 0;
@@ -22,6 +37,25 @@ public class SkelettMagierEntity extends HostileEntity implements GeoEntity {
     public SkelettMagierEntity(EntityType<? extends HostileEntity> entityType, World world) {
         super(entityType, world);
     }
+
+
+    @Override
+    protected void initDataTracker(DataTracker.Builder builder) {
+        super.initDataTracker(builder);
+        builder.add(ATTACK_STATE, AttackState.NONE.ordinal());
+    }
+
+    // NEU: Getter- und Setter-Methoden, die den DataTracker verwenden
+    public AttackState getAttackState() {
+        // Lese den Integer aus dem Tracker und wandle ihn zurück in den Enum-Wert
+        return AttackState.values()[this.dataTracker.get(ATTACK_STATE)];
+    }
+
+    public void setAttackState(AttackState state) {
+        // Schreibe den neuen Status in den Tracker. Der Server sendet das Update automatisch an die Clients.
+        this.dataTracker.set(ATTACK_STATE, state.ordinal());
+    }
+
 
     public static DefaultAttributeContainer.Builder setAttributes() {
         return HostileEntity.createHostileAttributes()
@@ -32,18 +66,29 @@ public class SkelettMagierEntity extends HostileEntity implements GeoEntity {
 
     @Override
     protected void initGoals() {
-        this.goalSelector.add(1, new SwimGoal(this));
-        this.goalSelector.add(3, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
-        this.goalSelector.add(4, new WanderAroundFarGoal(this, 1.0));
-        // TODO: Später eine Angriffs-KI hinzufügen
+        this.goalSelector.add(0, new SwimGoal(this)); // Höchste Priorität, damit er nicht ertrinkt
 
-        this.targetSelector.add(2, new ActiveTargetGoal<>(this, PlayerEntity.class, true));
+        this.goalSelector.add(2, new SkelettMagierSpamAttackGoal(this, 1.0D, 10, 30.0f));
+
+
+        this.goalSelector.add(4, new WanderAroundFarGoal(this, 0.8D));
+        this.goalSelector.add(5, new LookAtEntityGoal(this, PlayerEntity.class, 8.0f));
+        this.goalSelector.add(6, new LookAroundGoal(this));
+
+        // Ziel-Selektoren sind perfekt so
+        this.targetSelector.add(1, new ActiveTargetGoal<>(this, PlayerEntity.class, true));
+        this.targetSelector.add(2, new ActiveTargetGoal<>(this, VillagerEntity.class, true));
     }
 
     // NEU: Die tick()-Methode, um unseren Timer herunterzuzählen
     @Override
     public void tick() {
         super.tick();
+
+        // NEU: Zähle den Haupt-Angriffs-Cooldown hier herunter
+        if (this.spamAttackCooldown > 0) {
+            this.spamAttackCooldown--;
+        }
         // Wir zählen den Cooldown nur auf der Client-Seite herunter, wo Animationen stattfinden.
         if (this.getWorld().isClient()) {
             if (this.idleAnimationCooldown > 0) {
@@ -61,14 +106,26 @@ public class SkelettMagierEntity extends HostileEntity implements GeoEntity {
         controllerRegistrar.add(new AnimationController<>(this, "head_controller", 0, this::headPredicate));
     }
 
-    // Predicate 1: Steuert nur die Körperanimationen
     private PlayState bodyPredicate(AnimationState<SkelettMagierEntity> state) {
-        // Wenn der Mob sich bewegt, spiele die "walk"-Animation.
+        // WICHTIG: Verwende jetzt den neuen Getter!
+        if (this.getAttackState() != AttackState.NONE) {
+            switch (this.getAttackState()) {
+                case PREPARE:
+                    state.getController().setAnimation(RawAnimation.begin().thenPlay("animation.skelett_magier.spam_prepare"));
+                    break;
+                case CAST:
+                    state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.skelett_magier.spam_cast_loop"));
+                    break;
+                case FINISH:
+                    state.getController().setAnimation(RawAnimation.begin().thenPlay("animation.skelett_magier.spam_finish"));
+                    break;
+            }
+            return PlayState.CONTINUE;
+        }
+
         if (state.isMoving()) {
             state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.skelett_magier.walk"));
-        }
-        // Ansonsten spiele die "idle" (Atmungs)-Animation.
-        else {
+        } else {
             state.getController().setAnimation(RawAnimation.begin().thenLoop("animation.skelett_magier.idle"));
         }
         return PlayState.CONTINUE;

@@ -34,7 +34,7 @@ public class ModEntities {
 
     public static final EntityType<SkelettMagierEntity> SKELETT_MAGIER = register("skelett_magier",
             EntityType.Builder.create(SkelettMagierEntity::new, SpawnGroup.MONSTER) // MONSTER, da es ein feindlicher Mob ist
-                    .dimensions(0.6f, 1.99f) // Typische Humanoiden-Größe
+                    .dimensions(0.6f, 1.2f) // Typische Humanoiden-Größe
     );
 
     public static void registerModEntities() {
