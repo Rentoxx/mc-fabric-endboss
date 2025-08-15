@@ -1,5 +1,6 @@
 package tech.tguentner.entity;
 
+import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnGroup;
 import net.minecraft.registry.Registries;
@@ -31,7 +32,14 @@ public class ModEntities {
                     .disableSaving()
     );
 
+    public static final EntityType<SkelettMagierEntity> SKELETT_MAGIER = register("skelett_magier",
+            EntityType.Builder.create(SkelettMagierEntity::new, SpawnGroup.MONSTER) // MONSTER, da es ein feindlicher Mob ist
+                    .dimensions(0.6f, 1.99f) // Typische Humanoiden-Größe
+    );
+
     public static void registerModEntities() {
         AssasinEndboss.LOGGER.info("Registering Mod Entities for " + AssasinEndboss.MOD_ID);
+        FabricDefaultAttributeRegistry.register(SKELETT_MAGIER, SkelettMagierEntity.setAttributes());
+
     }
 }
